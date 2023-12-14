@@ -1,1 +1,60 @@
-https://docs.google.com/document/d/1y826AHvAuxD3ssHio95pjka5gygACbj1ZzqP7UkAnYA/edit
+-- Using a common table expression (CTE) to calculate various statistics for each user.
+WITH CTE AS (
+    -- Calculating different metrics based on user data
+    SELECT
+        users.user_id,
+        -- Calculating age based on birthdate
+        DATE_PART('year', CURRENT_DATE) - DATE_PART('year', birthdate) AS age,
+        -- Calculating proportion of users who are married and have children
+        SUM(CASE WHEN has_children AND married THEN 1 ELSE 0 END) :: FLOAT / COUNT(users.*) AS married_with_children,
+        -- Calculating proportion of users with flight discounts and no cancellation
+        SUM(CASE WHEN flight_discount AND cancellation = false THEN 1 ELSE 0 END) :: FLOAT / COUNT(CASE WHEN flight_booked = true THEN 1 ELSE 0 END) AS discount_flight_proportion,
+        -- Calculating proportion of users with hotel discounts and no cancellation
+        SUM(CASE WHEN hotel_discount AND cancellation = false THEN 1 ELSE 0 END) :: FLOAT / COUNT(CASE WHEN hotel_booked = true THEN 1 ELSE 0 END) AS discount_hotel_proportion,
+        -- Calculating average flight discount percentage
+        ROUND(AVG(flight_discount_amount), 2) AS average_flight_discount_perc,
+        -- Calculating average hotel discount percentage
+        ROUND(AVG(hotel_discount_amount), 2) AS average_hotel_discount_perc,
+        -- Calculating ads (average dollars spent) per kilometer
+        SUM(base_fare_usd - flight_discount_amount * base_fare_usd) / SUM(haversine_distance(home_airport_lat, home_airport_lon, destination_airport_lat, destination_airport_lon)) AS ADS_per_km,
+        -- Calculating mean session time
+        AVG(session_end - session_start) AS mean_session_time,
+        -- Calculating hotel booking ratio
+        ROUND(SUM(CASE WHEN hotel_booked AND cancellation = false THEN 1 ELSE 0 END) * 1.0 / COUNT(CASE WHEN hotel_booked = true THEN 1 ELSE 0 END), 2) AS hotel_booking_ratio,
+        -- Calculating flights booking ratio
+        ROUND(SUM(CASE WHEN flight_booked AND cancellation = false THEN 1 ELSE 0 END) * 1.0 / COUNT(CASE WHEN flight_booked = true THEN 1 ELSE 0 END), 2) AS flights_booking_ratio,
+        -- Calculating average total spent
+        ROUND(AVG(COALESCE(base_fare_usd, 0) + COALESCE(hotel_per_room_usd, 0) - COALESCE(hotel_discount_amount, 0) + COALESCE(flight_discount_amount, 0)), 2) AS avg_tot_spent,
+        -- Calculating hotel and flights booking ratio
+        ROUND(SUM(CASE WHEN flight_booked = true AND hotel_booked = true AND cancellation = false THEN 1 ELSE 0 END) * 1.0 / COUNT(*), 2) AS hotel_and_flights_booking_ratio,
+        -- Calculating cancellation ratio
+        ROUND(SUM(CASE WHEN cancellation = true AND (flight_booked = true OR hotel_booked = true) THEN 1 ELSE 0 END) * 1.0 / NULLIF(SUM(CASE WHEN flight_booked = true OR hotel_booked = true THEN 1 ELSE 0 END), 0), 2) AS cancellation_ratio,
+        -- Calculating bags ratio
+        CASE
+            WHEN SUM(CASE WHEN flight_booked THEN 1 ELSE 0 END) > 0 THEN
+                ROUND(SUM(CASE WHEN checked_bags > 0 AND cancellation = false THEN 1 ELSE 0 END) * 1.0 / SUM(CASE WHEN flight_booked THEN 1 ELSE 0 END), 2)
+            ELSE 0.00
+        END AS bags_ratio,
+        -- Counting hotel bookings
+        SUM(CASE WHEN hotel_booked AND cancellation = false THEN 1 ELSE 0 END) AS hotel_booked_count,
+        -- Counting flight bookings
+        SUM(CASE WHEN flight_booked AND cancellation = false THEN 1 ELSE 0 END) AS flight_booked_count,
+        -- Calculating users with no orders ratio
+        ROUND(SUM(CASE WHEN flight_booked = false AND hotel_booked = false THEN 1 ELSE 0 END) * 1.0 / COUNT(*), 2) AS users_no_orders
+    FROM sessions
+    -- Joining sessions, users, flights, and hotels tables
+    LEFT JOIN users ON users.user_id = sessions.user_id
+    LEFT JOIN flights ON flights.trip_id = sessions.trip_id
+    LEFT JOIN hotels ON hotels.trip_id = sessions.trip_id
+    -- Filtering sessions based on session start date
+    WHERE session_start > '2023-01-04'
+    -- Selecting users who have more than 7 sessions
+    AND users.user_id IN (
+        SELECT user_id
+        FROM sessions
+        WHERE session_start > '2023-01-04'
+        GROUP BY user_id
+        HAVING COUNT(*) > 7
+    )
+    -- Grouping results by user_id
+    GROUP
