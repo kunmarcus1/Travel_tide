@@ -1,8 +1,7 @@
 -- Using a common table expression (CTE) to calculate various statistics for each user.
 WITH CTE AS (
     -- Calculating different metrics based on user data
-    SELECT
-        users.user_id,
+    SELECT users.user_id,
         -- Calculating age based on birthdate
         DATE_PART('year', CURRENT_DATE) - DATE_PART('year', birthdate) AS age,
         -- Calculating proportion of users who are married and have children
@@ -57,4 +56,26 @@ WITH CTE AS (
         HAVING COUNT(*) > 7
     )
     -- Grouping results by user_id
-    GROUP
+    GROUP BY users.user_id
+)
+
+-- Selecting data from the CTE and calculating perks for each user
+SELECT cte.*,
+    -- Subquery to calculate perks based on conditions
+    (SELECT
+        CASE
+            -- Users with no orders or users with less than 25% of average total spent
+            WHEN users_no_orders = 1.00 OR avg_tot_spent < 80 THEN 'No cancellation fees'
+            -- Users who booked hotel once and had a flight more than 1 time
+            WHEN hotel_booked_count = 1 AND flight_booked_count > 1 THEN '1 night free hotel with flight'
+            -- Users that over 78% of their sessions didn't book anything (Q4)
+            WHEN users_no_orders > 0.78 THEN 'Exclusive discounts'
+            -- Users with less than 3.2% cancellations, married with children, and over 0.49 bags per flight (median)
+            WHEN cancellation_ratio < 0.032 AND married_with_children = 1 AND bags_ratio > 0.49 THEN 'Free checked-in bag'
+            -- Users with less than 11% average hotel discount and booked hotel more than once
+            WHEN average_hotel_discount_perc < 0.11 AND hotel_booked_count > 1 THEN 'Free hotel meal'
+            ELSE 'Exclusive discounts'
+        END
+    FROM CTE AS sub_cte
+    WHERE sub_cte.user_id = cte.user_id) AS perks
+FROM CTE;
